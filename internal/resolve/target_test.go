@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-func atoms(t Target) TargetKind {
-	return t.Kind
-}
-
 func TestParseTarget(t *testing.T) {
 	tests := []struct {
 		input string
@@ -20,7 +16,6 @@ func TestParseTarget(t *testing.T) {
 		{"-100", TargetNumeric, -100, ""},
 		{"0", TargetNumeric, 0, ""},
 		{"@channel", TargetUsername, 0, "channel"},
-		{"@", TargetUsername, 0, ""},               // edge: known ok parse
 		{"https://t.me/channel", TargetTmeLink, 0, "channel"},
 		{"https://t.me/channel?start=1", TargetTmeLink, 0, "channel"},
 		{"t.me/channel", TargetTmeLink, 0, "channel"},
@@ -44,6 +39,7 @@ func TestParseTargetErrors(t *testing.T) {
 	inputs := []string{
 		"",
 		" ",
+		"@",
 		"https://t.me/+secret",
 		"t.me/joinchat/abc",
 		"https://t.me/+",

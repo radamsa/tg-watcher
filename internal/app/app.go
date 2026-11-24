@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"tg-watcher/internal/auth"
@@ -17,6 +18,8 @@ import (
 	"tg-watcher/internal/telegram"
 	"tg-watcher/internal/watch"
 )
+
+var errNoChats = errors.New("no usable chats")
 
 // Run executes the application and returns the process exit code.
 func Run(ctx context.Context, opts cli.Options, cfg *config.Config, log *slog.Logger) int {
@@ -84,6 +87,7 @@ func run(ctx context.Context, opts cli.Options, cfg *config.Config, log *slog.Lo
 }
 
 func runMonitor(ctx context.Context, tgClient *telegram.Client, opts cli.Options, cfg *config.Config, log *slog.Logger, tmpl *format.Template) error {
+	// Parse chat identifiers.
 	targets, errs := resolve.ParseTargets(opts.Chats)
 	for _, e := range errs {
 		log.Error("invalid chat identifier", "error", e)
@@ -92,8 +96,10 @@ func runMonitor(ctx context.Context, tgClient *telegram.Client, opts cli.Options
 		return fmt.Errorf("no valid chat identifiers provided")
 	}
 
+	// Resolve chats via Telegram API.
 	chats := tgClient.Resolve(ctx, targets, log)
 
+	// Separate accessible and inaccessible chats.
 	usable := make([]resolve.ChatInfo, 0, len(chats))
 	for _, c := range chats {
 		if c.Err != nil {
@@ -103,9 +109,10 @@ func runMonitor(ctx context.Context, tgClient *telegram.Client, opts cli.Options
 		}
 	}
 	if len(usable) == 0 {
-		return fmt.Errorf("no usable chats: all specified chats are inaccessible")
+		return errNoChats
 	}
 
+	// Baseline: fetch the latest message ID for each chat.
 	states := make(map[int64]*watch.ChatState, len(usable))
 	for _, ci := range usable {
 		baselineID, err := tgClient.FetchBaseline(ctx, ci.ChatID, ci.AccessHash)
@@ -122,16 +129,19 @@ func runMonitor(ctx context.Context, tgClient *telegram.Client, opts cli.Options
 		)
 	}
 
+	// Output writer and dedup engine.
 	wr := output.New(os.Stdout, 256)
 	engine := watch.NewEngine(states, wr, tmpl, log)
 	engine.Start()
 	defer engine.Stop()
 
+	// Start the updates manager (live updates).
 	if err := tgClient.StartUpdates(ctx, engine, usable); err != nil {
 		return fmt.Errorf("start updates: %w", err)
 	}
 	log.Info("update stream started")
 
+	// Start the periodic poller.
 	poller := telegram.NewPoller(
 		tgClient, engine, states,
 		cfg.Watch.PollInterval.Std(),
@@ -140,8 +150,10 @@ func runMonitor(ctx context.Context, tgClient *telegram.Client, opts cli.Options
 	go poller.Run(ctx)
 	log.Info("poller started", "interval", cfg.Watch.PollInterval.Std())
 
+	// READY — after this point, messages may appear on stdout.
 	log.Info("READY — monitoring starting")
 
+	// Wait for cancellation (Ctrl+C).
 	<-ctx.Done()
 	log.Info("shutting down")
 	return nil
@@ -193,9 +205,13 @@ func classifyShutdownError(err error, log *slog.Logger) int {
 		log.Error("authentication failed", "error", err)
 		return cli.ExitAuth
 	}
-	if err != nil && err.Error() == "no usable chats: all specified chats are inaccessible" {
-		log.Error("no accessible chats to monitor")
+	if errors.Is(err, errNoChats) {
+		log.Error("all specified chats are inaccessible")
 		return cli.ExitNoChats
+	}
+	if err != nil && strings.Contains(err.Error(), "no valid chat") {
+		log.Error("chat identifier error", "error", err)
+		return cli.ExitUsage
 	}
 	log.Error("runtime error", "error", err)
 	return cli.ExitRuntime

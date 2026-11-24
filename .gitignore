@@ -1,0 +1,9 @@
+# Build artifacts
+/tg-watcher
+/dist/
+*.exe
+
+# Local configuration and secrets. Never commit these.
+/config.toml
+*.session
+.sessions/

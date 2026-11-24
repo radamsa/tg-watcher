@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"log/slog"
+	"os"
 	"sync"
 
 	"tg-watcher/internal/message"
@@ -19,14 +20,14 @@ type Renderer interface {
 // serialises per-chat processing, and writes the result to stdout via the
 // output writer.
 type Engine struct {
-	mu     sync.Mutex
-	states map[int64]*ChatState // chatID → state
-	ch     chan event
-	output *output.Writer
-	render Renderer
-	log    *slog.Logger
-	done   chan struct{}
-	closed bool
+	mu      sync.Mutex
+	states  map[int64]*ChatState // chatID → state
+	ch      chan event
+	output  *output.Writer
+	render  Renderer
+	log     *slog.Logger
+	done    chan struct{}
+	stopped bool
 }
 
 type event struct {
@@ -36,6 +37,9 @@ type event struct {
 
 // NewEngine creates an idle engine. Call Start to begin processing.
 func NewEngine(states map[int64]*ChatState, w *output.Writer, r Renderer, log *slog.Logger) *Engine {
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
 	return &Engine{
 		states: states,
 		output: w,
@@ -50,40 +54,43 @@ func NewEngine(states map[int64]*ChatState, w *output.Writer, r Renderer, log *s
 func (e *Engine) Start() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.ch != nil {
+	if e.ch != nil || e.stopped {
 		return
 	}
 	e.ch = make(chan event, 64)
-	go e.run()
+	go e.run(e.ch)
 }
 
 // Stop waits for the processor to drain and shuts it down.
 func (e *Engine) Stop() {
 	e.mu.Lock()
-	if e.closed {
+	ch := e.ch
+	if ch == nil || e.stopped {
 		e.mu.Unlock()
 		return
 	}
-	e.closed = true
-	ch := e.ch
+	e.stopped = true
 	e.ch = nil
 	e.mu.Unlock()
 
-	// Drain the channel.
-	for range ch {
-	}
+	close(ch)
 	<-e.done
 }
 
 // Ingest hands a normalized message to the pipeline. It blocks when the
-// internal queue is full (backpressure).
+// internal queue is full (backpressure). A nil ctx is treated as non-
+// cancellable.
 func (e *Engine) Ingest(ctx context.Context, chatID int64, msg message.Message) error {
 	e.mu.Lock()
 	ch := e.ch
-	closed := e.closed
+	stopped := e.stopped
 	e.mu.Unlock()
 
-	if ch == nil || closed {
+	if ch == nil || stopped {
+		return nil
+	}
+	if ctx == nil {
+		ch <- event{chatID: chatID, msg: msg}
 		return nil
 	}
 	select {
@@ -101,12 +108,8 @@ func (e *Engine) State(chatID int64) *ChatState {
 	return e.states[chatID]
 }
 
-func (e *Engine) run() {
-	defer func() { e.done <- struct{}{} }()
-
-	e.mu.Lock()
-	ch := e.ch
-	e.mu.Unlock()
+func (e *Engine) run(ch chan event) {
+	defer func() { close(e.done) }()
 
 	for ev := range ch {
 		st := e.State(ev.chatID)

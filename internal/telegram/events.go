@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gotd/td/tg"
@@ -150,7 +151,8 @@ func fwdFromPeer(fwd tg.MessageFwdHeader, userLib map[int64]*tg.User) string {
 		switch p := from.(type) {
 		case *tg.PeerUser:
 			if u, ok2 := userLib[p.UserID]; ok2 {
-				return u.FirstName + " " + u.LastName
+				name := strings.TrimSpace(u.FirstName + " " + u.LastName)
+				return name
 			}
 			return "user#" + strconv.FormatInt(p.UserID, 10)
 		default:

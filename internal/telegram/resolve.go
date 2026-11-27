@@ -64,6 +64,7 @@ type chatInfo struct {
 	id         int64
 	accessHash int64
 	title      string
+	username   string
 	isChannel  bool
 	isGroup    bool
 }
@@ -73,6 +74,7 @@ func (ci chatInfo) toChatInfo() resolve.ChatInfo {
 		ChatID:     ci.id,
 		AccessHash: ci.accessHash,
 		Title:      ci.title,
+		Username:   ci.username,
 	}
 }
 
@@ -121,6 +123,7 @@ func buildChatMap(chats []tg.ChatClass, m map[int64]chatInfo) {
 				id:         chat.ID,
 				accessHash: chat.AccessHash,
 				title:      t,
+				username:   chat.Username,
 				isChannel:  true,
 			}
 		case *tg.Chat:
@@ -153,6 +156,7 @@ func resolveFromResolveResult(username string, r *tg.ContactsResolvedPeer) resol
 				ChatID:     chat.ID,
 				AccessHash: chat.AccessHash,
 				Title:      chat.Title,
+				Username:   chat.Username,
 			}
 		case *tg.Chat:
 			return resolve.ChatInfo{
@@ -164,7 +168,8 @@ func resolveFromResolveResult(username string, r *tg.ContactsResolvedPeer) resol
 	for _, userClass := range r.Users {
 		if user, ok := userClass.(*tg.User); ok && !user.Bot {
 			return resolve.ChatInfo{
-				ChatID: user.ID,
+				ChatID:   user.ID,
+				Username: user.Username,
 				Title: func() string {
 					n := user.FirstName
 					if user.LastName != "" {

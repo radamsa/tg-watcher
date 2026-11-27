@@ -227,3 +227,23 @@ func TestRenderEventNilCollections(t *testing.T) {
 		t.Fatalf("Render = %q, want %q", got, want)
 	}
 }
+
+func TestPerChatRenderer(t *testing.T) {
+	textTmpl, _ := Compile(utcSpec("{text}"))
+	jsonTmpl, _ := Compile(utcSpec("{text|json}"))
+
+	byID := map[int64]*Template{
+		1: jsonTmpl,
+	}
+	pc := NewPerChat(textTmpl, byID)
+
+	m := message.Message{ChatID: 1, Text: "hello"}
+	if got := pc.Render(m); got != `"hello"` {
+		t.Fatalf("chat 1 should use jsonTmpl: %q", got)
+	}
+
+	m2 := message.Message{ChatID: 2, Text: "hello"}
+	if got := pc.Render(m2); got != "hello" {
+		t.Fatalf("chat 2 should use default: %q", got)
+	}
+}

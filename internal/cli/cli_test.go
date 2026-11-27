@@ -79,6 +79,53 @@ func TestParseHelpAndVersion(t *testing.T) {
 	}
 }
 
+func TestParseP2Flags(t *testing.T) {
+	opts, err := Parse([]string{
+		"+31612345678", "@a",
+		"--mentions-only",
+		"--from", "@alice",
+		"--from", "100",
+		"--match", "error",
+		"--match", "critical",
+		"--all",
+		"--template-per-chat",
+	})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !opts.MentionsOnly || !opts.All || !opts.TemplatePerChat {
+		t.Fatalf("bool flags: %#v", opts)
+	}
+	if !reflect.DeepEqual(opts.From, []string{"@alice", "100"}) {
+		t.Fatalf("from = %#v", opts.From)
+	}
+	if !reflect.DeepEqual(opts.Match, []string{"error", "critical"}) {
+		t.Fatalf("match = %#v", opts.Match)
+	}
+}
+
+func TestParseP2BoolFlagWithValue(t *testing.T) {
+	for _, arg := range []string{"--mentions-only=true", "--all=1", "--template-per-chat=yes"} {
+		_, err := Parse([]string{"+31612345678", "@a", arg})
+		if err == nil {
+			t.Fatalf("expected error for %q", arg)
+		}
+	}
+}
+
+func TestParseFromMatchEmptyValue(t *testing.T) {
+	for _, args := range [][]string{
+		{"+31612345678", "@a", "--from", ""},
+		{"+31612345678", "@a", "--match=", "@a"},
+		{"+31612345678", "@a", "--from="},
+	} {
+		_, err := Parse(args)
+		if err == nil {
+			t.Fatalf("expected error for %q", args)
+		}
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	tests := []struct {
 		name string

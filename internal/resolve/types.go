@@ -9,6 +9,8 @@ type ChatInfo struct {
 	AccessHash int64
 	// Title is the display name of the chat.
 	Title string
+	// Username is the public username without "@", or empty for private chats.
+	Username string
 	// Err is set when the chat is inaccessible.
 	Err error
 }

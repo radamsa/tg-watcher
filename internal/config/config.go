@@ -59,6 +59,9 @@ type Config struct {
 	Telegram      Telegram
 	Watch         Watch
 	Formats       map[string]Format
+	// ChatFormats maps a chat identifier (numeric ID, @username, or exact
+	// title) to a named format. It is used only with --template-per-chat.
+	ChatFormats map[string]string
 
 	templates map[string]*format.Template
 }
@@ -101,6 +104,7 @@ func Defaults() *Config {
 			PollInterval: Duration(defaultPollInterval),
 			PollPageSize: defaultPollPageSize,
 		},
+		ChatFormats: map[string]string{},
 		Formats: map[string]Format{
 			BuiltinText: {
 				Template:        "[{datetime}] [{channel}] [{sender}] {text}",
@@ -132,6 +136,7 @@ type rawConfig struct {
 	Telegram      *rawTelegram         `toml:"telegram"`
 	Watch         *rawWatch            `toml:"watch"`
 	Formats       map[string]rawFormat `toml:"formats"`
+	ChatFormats   map[string]string    `toml:"chat_formats"`
 }
 
 type rawTelegram struct {
@@ -257,6 +262,9 @@ func (c *Config) merge(data []byte) error {
 		}
 		c.Formats[name] = base
 	}
+	for chat, name := range raw.ChatFormats {
+		c.ChatFormats[chat] = name
+	}
 	return nil
 }
 
@@ -296,6 +304,21 @@ func (c *Config) Validate() error {
 	}
 	if _, ok := c.Formats[c.DefaultFormat]; !ok {
 		return fmt.Errorf("default_format %q is not defined", c.DefaultFormat)
+	}
+
+	if c.ChatFormats == nil {
+		c.ChatFormats = map[string]string{}
+	}
+	for chat, name := range c.ChatFormats {
+		if strings.TrimSpace(chat) == "" {
+			return errors.New("chat_formats keys must not be empty")
+		}
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("chat_formats.%q: format name must not be empty", chat)
+		}
+		if _, ok := c.Formats[name]; !ok {
+			return fmt.Errorf("chat_formats.%q: unknown format %q", chat, name)
+		}
 	}
 
 	compiled := make(map[string]*format.Template, len(c.Formats))

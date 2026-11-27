@@ -188,3 +188,27 @@ func TestEngine_IngestAfterStop(t *testing.T) {
 		t.Fatalf("no output expected after stop")
 	}
 }
+
+func TestEngine_FilterIntegration(t *testing.T) {
+	info := resolve.ChatInfo{ChatID: 1, Title: "Ch"}
+	states := map[int64]*ChatState{
+		1: NewChatState(info, 0),
+	}
+	tw := &testWriter{}
+	wr := output.New(tw, 64)
+	r := &mockRenderer{result: "msg\n"}
+	e := NewEngine(states, wr, r, nil)
+
+	f, _ := NewFilter(FilterOptions{MentionsOnly: true})
+	e.SetFilter(f)
+	e.Start()
+
+	// Non-mention should be filtered out.
+	_ = e.Ingest(nil, 1, message.Message{MessageID: 1, IsMention: false})
+	e.Stop()
+	wr.Close()
+
+	if len(tw.records) != 0 {
+		t.Fatalf("got %d records with filter active, want 0", len(tw.records))
+	}
+}

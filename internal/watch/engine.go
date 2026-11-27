@@ -25,6 +25,7 @@ type Engine struct {
 	ch      chan event
 	output  *output.Writer
 	render  Renderer
+	filter  *Filter
 	log     *slog.Logger
 	done    chan struct{}
 	stopped bool
@@ -47,6 +48,14 @@ func NewEngine(states map[int64]*ChatState, w *output.Writer, r Renderer, log *s
 		log:    log,
 		done:   make(chan struct{}),
 	}
+}
+
+// SetFilter installs the focus filter. It must be called before Start; a nil
+// filter matches everything.
+func (e *Engine) SetFilter(f *Filter) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.filter = f
 }
 
 // Start launches the background processor goroutine. The caller must eventually
@@ -108,6 +117,13 @@ func (e *Engine) State(chatID int64) *ChatState {
 	return e.states[chatID]
 }
 
+func (e *Engine) match(m message.Message) bool {
+	e.mu.Lock()
+	f := e.filter
+	e.mu.Unlock()
+	return f == nil || f.Match(m)
+}
+
 func (e *Engine) run(ch chan event) {
 	defer func() { close(e.done) }()
 
@@ -116,7 +132,13 @@ func (e *Engine) run(ch chan event) {
 		if st == nil {
 			continue
 		}
-		if !st.ShouldOutput(&ev.msg) {
+		if !st.ShouldProcess(&ev.msg) {
+			continue
+		}
+		if !e.match(ev.msg) {
+			continue
+		}
+		if st.Seen(ev.msg.MessageID) {
 			continue
 		}
 		rendered := e.render.Render(ev.msg)

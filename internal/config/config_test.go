@@ -270,6 +270,45 @@ func TestBuiltinEventRendersValidJSON(t *testing.T) {
 	}
 }
 
+func TestChatFormatsInvalid(t *testing.T) {
+	isolateEnv(t)
+	tests := []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"empty key", credentials + "\n[chat_formats]\n\"\" = \"jsonl\"\n", "empty"},
+		{"unknown format", credentials + "\n[chat_formats]\n\"@ch\" = \"nope\"\n", "unknown format"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.doc))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error %q does not mention %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestChatFormatsValid(t *testing.T) {
+	isolateEnv(t)
+	doc := credentials + `
+[chat_formats]
+"@ch" = "jsonl"
+"Some Channel" = "text"
+`
+	cfg, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(cfg.ChatFormats) != 2 {
+		t.Fatalf("ChatFormats = %#v", cfg.ChatFormats)
+	}
+}
+
 func TestFormatNamePriority(t *testing.T) {
 	isolateEnv(t)
 	cfg, err := Parse([]byte("default_format = \"jsonl\"\n" + credentials))

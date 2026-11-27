@@ -92,6 +92,11 @@ tg-watcher <phone> [--format NAME] [--config PATH] [--password PWD]
 | `--format NAME` | Output template name (default: from config or `"text"`) |
 | `--config PATH` | TOML config file (default: `~/.tg-watcher/config.toml`) |
 | `--password PWD` | 2FA password. Prefer `TG_PASSWORD` or the interactive prompt |
+| `--mentions-only` | Only print messages that mention your account |
+| `--from SENDER` | Only print messages from a sender (ID, @username, or name substring). Repeatable |
+| `--match REGEX` | Only print messages whose text matches REGEX. Repeatable |
+| `--all` | With multiple `--match` patterns, require every pattern to match |
+| `--template-per-chat` | Enable per-chat template selection from `[chat_formats]` config |
 | `--version` | Print version and exit |
 | `--help` | Print help and exit |
 
@@ -187,6 +192,39 @@ pin/mention flags, sender details, media references, and forward provenance:
 Use `{field|json}` to JSON-encode any field. Use `{{` / `}}` for literal braces.
 Numeric and boolean fields are emitted as JSON literals; `{media}` and
 `{forward}` are always JSON so they stay machine-readable.
+
+## Filters
+
+Messages can be filtered before output. All active filters must pass (AND):
+
+- `--mentions-only` keeps messages that mention your account.
+- `--from SENDER` keeps messages whose sender matches (repeatable, OR). The
+  value is a numeric user ID, an @username (without the `@`), or a
+  case-insensitive substring of the display name.
+- `--match REGEX` keeps messages whose text matches the regex (repeatable).
+  By default any one pattern is enough; combine with `--all` to require every
+  pattern.
+
+Example — print only errors from the admin:
+
+```shell
+tg-watcher +31612345678 @alerts --from @admin --match "(?i)error|critical"
+```
+
+## Per-chat templates
+
+When `--template-per-chat` is active, each chat can use a different output
+template. Add a `[chat_formats]` section to the config:
+
+```toml
+[chat_formats]
+"@news" = "jsonl"
+"-1001234567890" = "event"
+"My Private Group" = "text"
+```
+
+Keys are matched in this order: numeric ID, @username, exact title (all
+case-insensitive). The format name must be defined in `[formats]`.
 
 ## Architecture
 

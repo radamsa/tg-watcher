@@ -16,7 +16,9 @@ const (
 )
 
 // Usage is the short synopsis shown on argument errors.
-const Usage = "usage: tg-watcher <phone> [--format NAME] [--config PATH] [--password PWD] [--version] [--help] [--] <chat>..."
+const Usage = "usage: tg-watcher <phone> [--format NAME] [--config PATH] [--password PWD] " +
+	"[--mentions-only] [--from SENDER] [--match REGEX] [--all] [--template-per-chat] " +
+	"[--version] [--help] [--] <chat>..."
 
 // Help is the full help text.
 const Help = Usage + `
@@ -36,18 +38,33 @@ Flags:
   --config PATH     TOML config file (default: ~/.tg-watcher/config.toml).
   --password PWD    Cloud 2FA password. Prefer TG_PASSWORD or the interactive
                     prompt; a command-line password is visible to other users.
+  --mentions-only   Only print messages that mention your account.
+  --from SENDER     Only print messages from a sender. SENDER is a numeric
+                    user ID, @username, or part of the display name. May be
+                    repeated; a message matching any value is printed.
+  --match REGEX     Only print messages whose text matches REGEX. May be
+                    repeated; by default any pattern is enough.
+  --all             With multiple --match patterns, require every pattern to
+                    match instead of any.
+  --template-per-chat
+                    Select output templates from [chat_formats] in the config.
   --version         Print the version and exit.
   --help            Print this help and exit.`
 
 // Options is the result of parsing the command line.
 type Options struct {
-	Phone       string
-	Chats       []string
-	Format      string
-	ConfigPath  string
-	Password    string
-	ShowVersion bool
-	ShowHelp    bool
+	Phone           string
+	Chats           []string
+	Format          string
+	ConfigPath      string
+	Password        string
+	MentionsOnly    bool
+	From            []string
+	Match           []string
+	All             bool
+	TemplatePerChat bool
+	ShowVersion     bool
+	ShowHelp        bool
 }
 
 // UsageError marks an argument error that must exit with code 2.
@@ -86,7 +103,7 @@ func Parse(args []string) (Options, error) {
 		if strings.HasPrefix(arg, "-") && arg != "-" {
 			name, value, hasValue := splitFlag(arg)
 			switch name {
-			case "--format", "--config", "--password":
+			case "--format", "--config", "--password", "--from", "--match":
 				if !hasValue {
 					i++
 					if i >= len(args) {
@@ -104,6 +121,22 @@ func Parse(args []string) (Options, error) {
 					opts.ConfigPath = value
 				case "--password":
 					opts.Password = value
+				case "--from":
+					opts.From = append(opts.From, value)
+				case "--match":
+					opts.Match = append(opts.Match, value)
+				}
+			case "--mentions-only", "--all", "--template-per-chat":
+				if hasValue {
+					return Options{}, &UsageError{Message: fmt.Sprintf("flag %s does not take a value", name)}
+				}
+				switch name {
+				case "--mentions-only":
+					opts.MentionsOnly = true
+				case "--all":
+					opts.All = true
+				case "--template-per-chat":
+					opts.TemplatePerChat = true
 				}
 			case "--version":
 				if hasValue {

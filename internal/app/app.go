@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,16 +31,32 @@ func Run(ctx context.Context, opts cli.Options, cfg *config.Config, log *slog.Lo
 		return cli.ExitUsage
 	}
 
+	filter, err := watch.NewFilter(watch.FilterOptions{
+		MentionsOnly: opts.MentionsOnly,
+		From:         opts.From,
+		Match:        opts.Match,
+		All:          opts.All,
+	})
+	if err != nil {
+		log.Error("invalid filter", "error", err)
+		return cli.ExitUsage
+	}
+
 	log.Info("configuration loaded",
 		"format", name,
 		"chats", len(opts.Chats),
 		"poll_interval", cfg.Watch.PollInterval.Std().String(),
+		"mentions_only", opts.MentionsOnly,
+		"from", len(opts.From),
+		"match", len(opts.Match),
+		"match_all", opts.All,
+		"template_per_chat", opts.TemplatePerChat,
 	)
 
-	return run(ctx, opts, cfg, log, tmpl)
+	return run(ctx, opts, cfg, log, tmpl, filter)
 }
 
-func run(ctx context.Context, opts cli.Options, cfg *config.Config, log *slog.Logger, tmpl *format.Template) int {
+func run(ctx context.Context, opts cli.Options, cfg *config.Config, log *slog.Logger, tmpl *format.Template, filter *watch.Filter) int {
 	sessionDir, err := auth.DefaultSessionDir()
 	if err != nil {
 		log.Error("cannot locate session directory", "error", err)
@@ -77,7 +94,7 @@ func run(ctx context.Context, opts cli.Options, cfg *config.Config, log *slog.Lo
 			return err
 		}
 		log.Info("authorization successful", "user", user)
-		return runMonitor(runCtx, tgClient, opts, cfg, log, tmpl)
+		return runMonitor(runCtx, tgClient, opts, cfg, log, tmpl, filter)
 	}); err != nil {
 		exitCode = classifyShutdownError(err, log)
 	} else {
@@ -86,7 +103,7 @@ func run(ctx context.Context, opts cli.Options, cfg *config.Config, log *slog.Lo
 	return exitCode
 }
 
-func runMonitor(ctx context.Context, tgClient *telegram.Client, opts cli.Options, cfg *config.Config, log *slog.Logger, tmpl *format.Template) error {
+func runMonitor(ctx context.Context, tgClient *telegram.Client, opts cli.Options, cfg *config.Config, log *slog.Logger, tmpl *format.Template, filter *watch.Filter) error {
 	// Parse chat identifiers.
 	targets, errs := resolve.ParseTargets(opts.Chats)
 	for _, e := range errs {
@@ -131,7 +148,12 @@ func runMonitor(ctx context.Context, tgClient *telegram.Client, opts cli.Options
 
 	// Output writer and dedup engine.
 	wr := output.New(os.Stdout, 256)
-	engine := watch.NewEngine(states, wr, tmpl, log)
+	var renderer watch.Renderer = tmpl
+	if opts.TemplatePerChat {
+		renderer = buildPerChatRenderer(cfg, usable, tmpl, log)
+	}
+	engine := watch.NewEngine(states, wr, renderer, log)
+	engine.SetFilter(filter)
 	engine.Start()
 	defer engine.Stop()
 
@@ -215,4 +237,69 @@ func classifyShutdownError(err error, log *slog.Logger) int {
 	}
 	log.Error("runtime error", "error", err)
 	return cli.ExitRuntime
+}
+
+// buildPerChatRenderer builds the per-chat template map from [chat_formats]
+// and the resolved chat list. It is called only when --template-per-chat is
+// active.
+func buildPerChatRenderer(cfg *config.Config, chats []resolve.ChatInfo, def *format.Template, log *slog.Logger) *format.PerChat {
+	byID := make(map[int64]*format.Template)
+	if len(cfg.ChatFormats) == 0 {
+		log.Warn("--template-per-chat is set but [chat_formats] is empty")
+		return format.NewPerChat(def, byID)
+	}
+	for _, ci := range chats {
+		name, ok := chatFormat(cfg.ChatFormats, ci)
+		if !ok {
+			continue
+		}
+		tmpl, ok := cfg.Template(name)
+		if !ok {
+			log.Warn("chat format refers to unknown template", "chat", ci.Title, "format", name)
+			continue
+		}
+		byID[ci.ChatID] = tmpl
+		byID[-ci.ChatID] = tmpl
+	}
+	return format.NewPerChat(def, byID)
+}
+
+// chatFormat searches m (the [chat_formats] map) for a key that matches the
+// given chat info. It checks three key types in order of specificity: numeric
+// ID, @username, and exact title.
+func chatFormat(m map[string]string, ci resolve.ChatInfo) (string, bool) {
+	// 1. Numeric ID (positive or negative).
+	for key, name := range m {
+		id, err := strconv.ParseInt(strings.TrimSpace(key), 10, 64)
+		if err != nil {
+			continue
+		}
+		if id == ci.ChatID || id == -ci.ChatID {
+			return name, true
+		}
+	}
+	// 2. @username.
+	for key, name := range m {
+		key = strings.TrimSpace(key)
+		if !strings.HasPrefix(key, "@") || ci.Username == "" {
+			continue
+		}
+		if strings.EqualFold(key[1:], ci.Username) {
+			return name, true
+		}
+	}
+	// 3. Exact title (case-insensitive).
+	for key, name := range m {
+		key = strings.TrimSpace(key)
+		if key == "" || strings.HasPrefix(key, "@") {
+			continue
+		}
+		if _, err := strconv.ParseInt(key, 10, 64); err == nil {
+			continue
+		}
+		if strings.EqualFold(key, ci.Title) {
+			return name, true
+		}
+	}
+	return "", false
 }

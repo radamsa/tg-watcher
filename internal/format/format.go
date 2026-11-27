@@ -13,10 +13,22 @@ import (
 
 // Field names accepted in templates.
 const (
-	FieldDatetime = "datetime"
-	FieldChannel  = "channel"
-	FieldSender   = "sender"
-	FieldText     = "text"
+	FieldDatetime         = "datetime"
+	FieldChannel          = "channel"
+	FieldSender           = "sender"
+	FieldText             = "text"
+	FieldChatID           = "chat_id"
+	FieldMessageID        = "message_id"
+	FieldReplyToMessageID = "reply_to_message_id"
+	FieldDateUnix         = "date_unix"
+	FieldIsEdit           = "is_edit"
+	FieldIsPinned         = "is_pinned"
+	FieldIsMention        = "is_mention"
+	FieldSenderID         = "sender_id"
+	FieldSenderUsername   = "sender_username"
+	FieldSenderIsBot      = "sender_is_bot"
+	FieldMedia            = "media"
+	FieldForward          = "forward"
 )
 
 // FilterJSON encodes a value as a complete JSON string, including quotes.
@@ -176,7 +188,11 @@ func parsePlaceholder(body string) (segment, error) {
 
 	field := strings.TrimSpace(parts[0])
 	switch field {
-	case FieldDatetime, FieldChannel, FieldSender, FieldText:
+	case FieldDatetime, FieldChannel, FieldSender, FieldText,
+		FieldChatID, FieldMessageID, FieldReplyToMessageID, FieldDateUnix,
+		FieldIsEdit, FieldIsPinned, FieldIsMention,
+		FieldSenderID, FieldSenderUsername, FieldSenderIsBot,
+		FieldMedia, FieldForward:
 	default:
 		if field == "" {
 			return segment{}, fmt.Errorf("empty placeholder")
@@ -210,7 +226,7 @@ func (t *Template) Render(m message.Message) string {
 }
 
 func (t *Template) renderField(seg segment, m message.Message) string {
-	var value string
+	var value any
 	switch seg.field {
 	case FieldDatetime:
 		value = m.Date.In(t.spec.Location).Format(t.spec.DatetimeFormat)
@@ -221,17 +237,62 @@ func (t *Template) renderField(seg segment, m message.Message) string {
 	case FieldText:
 		value = m.Text
 		if !seg.asJSON {
-			value = indentLines(value, t.spec.MultilineIndent)
+			value = indentLines(m.Text, t.spec.MultilineIndent)
 		}
+	case FieldChatID:
+		value = m.ChatID
+	case FieldMessageID:
+		value = m.MessageID
+	case FieldReplyToMessageID:
+		value = m.ReplyToMessageID
+	case FieldDateUnix:
+		value = m.Date.Unix()
+	case FieldIsEdit:
+		value = m.IsEdit
+	case FieldIsPinned:
+		value = m.IsPinned
+	case FieldIsMention:
+		value = m.IsMention
+	case FieldSenderID:
+		value = m.SenderID
+	case FieldSenderUsername:
+		value = m.SenderUsername
+	case FieldSenderIsBot:
+		value = m.SenderIsBot
+	case FieldMedia:
+		if m.Media == nil {
+			value = []message.MediaRef{}
+		} else {
+			value = m.Media
+		}
+	case FieldForward:
+		value = m.Forward
 	}
 
 	if seg.asJSON {
-		// json.Marshal of a string always succeeds and returns a quoted,
-		// fully escaped JSON string.
-		encoded, _ := json.Marshal(value)
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return ""
+		}
 		return string(encoded)
 	}
-	return value
+	if value == nil {
+		return ""
+	}
+	if s, ok := value.(string); ok {
+		return s
+	}
+	// Structured values stay machine-readable even without the explicit
+	// filter; scalar values use their natural textual form.
+	switch seg.field {
+	case FieldMedia, FieldForward:
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return ""
+		}
+		return string(encoded)
+	}
+	return fmt.Sprint(value)
 }
 
 func indentLines(s string, spaces int) string {

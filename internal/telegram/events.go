@@ -90,10 +90,13 @@ func normalizeMessage(m *tg.Message, userLib map[int64]*tg.User, chatTitle strin
 	chatID := peerChatID(m.PeerID)
 
 	sender := composeSender(m, userLib, chatTitle)
+	senderID, senderUsername, senderIsBot := senderDetails(m, userLib)
 
 	var fwdSource string
+	var forward *message.Forward
 	if fwd, ok := m.GetFwdFrom(); ok {
 		fwdSource = fwdFromPeer(fwd, userLib)
+		forward = extractForward(fwd, userLib)
 	}
 
 	mediaKind := message.MediaNone
@@ -111,14 +114,128 @@ func normalizeMessage(m *tg.Message, userLib map[int64]*tg.User, chatTitle strin
 		text = body
 	}
 
-	return message.Message{
-		ChatID:    chatID,
-		MessageID: m.ID,
-		Date:      dt,
-		Channel:   chatTitle,
-		Sender:    sender,
-		Text:      text,
+	isEdit := false
+	if editDate, ok := m.GetEditDate(); ok && editDate != 0 {
+		isEdit = true
 	}
+
+	return message.Message{
+		ChatID:           chatID,
+		MessageID:        m.ID,
+		Date:             dt,
+		Channel:          chatTitle,
+		Sender:           sender,
+		Text:             text,
+		ReplyToMessageID: replyToMessageID(m),
+		IsEdit:           isEdit,
+		IsPinned:         m.Pinned,
+		IsMention:        m.Mentioned,
+		SenderID:         senderID,
+		SenderUsername:   senderUsername,
+		SenderIsBot:      senderIsBot,
+		Media:            extractMediaRefs(m),
+		Forward:          forward,
+	}
+}
+
+// senderDetails returns the numeric author ID, username and bot flag. The
+// display name is composed separately by composeSender.
+func senderDetails(m *tg.Message, userLib map[int64]*tg.User) (int64, string, bool) {
+	from, ok := m.GetFromID()
+	if !ok {
+		return 0, "", false
+	}
+	switch p := from.(type) {
+	case *tg.PeerUser:
+		if u, ok := userLib[p.UserID]; ok {
+			return p.UserID, strings.TrimSpace(u.Username), u.Bot
+		}
+		return p.UserID, "", false
+	case *tg.PeerChannel:
+		return p.ChannelID, "", false
+	case *tg.PeerChat:
+		return p.ChatID, "", false
+	}
+	return 0, "", false
+}
+
+// replyToMessageID extracts the replied-to message ID, if any.
+func replyToMessageID(m *tg.Message) int {
+	reply, ok := m.GetReplyTo()
+	if !ok {
+		return 0
+	}
+	if h, ok := reply.(*tg.MessageReplyHeader); ok {
+		if id, ok := h.GetReplyToMsgID(); ok {
+			return id
+		}
+	}
+	return 0
+}
+
+// extractForward converts the Telegram forward header into the internal
+// provenance model.
+func extractForward(fwd tg.MessageFwdHeader, userLib map[int64]*tg.User) *message.Forward {
+	f := &message.Forward{
+		FromName:    strings.TrimSpace(fwd.FromName),
+		PostAuthor:  fwd.PostAuthor,
+		ChannelPost: fwd.ChannelPost,
+		DateUnix:    int64(fwd.Date),
+	}
+	if from, ok := fwd.GetFromID(); ok {
+		f.FromID = peerChatID(from)
+		if p, ok := from.(*tg.PeerUser); ok {
+			if u, ok := userLib[p.UserID]; ok {
+				f.FromUsername = strings.TrimSpace(u.Username)
+				if f.FromName == "" {
+					f.FromName = strings.TrimSpace(u.FirstName + " " + u.LastName)
+				}
+			}
+		}
+	}
+	return f
+}
+
+// extractMediaRefs lists the attachments carried by a message. The returned
+// slice is never nil.
+func extractMediaRefs(m *tg.Message) []message.MediaRef {
+	refs := make([]message.MediaRef, 0, 1)
+	media, ok := m.GetMedia()
+	if !ok {
+		return refs
+	}
+	switch v := media.(type) {
+	case *tg.MessageMediaPhoto:
+		ref := message.MediaRef{Kind: message.MediaPhoto}
+		if p, ok := v.Photo.(*tg.Photo); ok {
+			ref.FileID = p.ID
+		}
+		refs = append(refs, ref)
+	case *tg.MessageMediaDocument:
+		kind, _ := classifyDocument(v)
+		ref := message.MediaRef{Kind: kind}
+		if d, ok := v.Document.(*tg.Document); ok {
+			ref.FileID = d.ID
+		}
+		refs = append(refs, ref)
+	case *tg.MessageMediaWebPage:
+		if wp, ok := v.Webpage.(*tg.WebPage); ok {
+			refs = append(refs, message.MediaRef{Kind: message.MediaWebPage, FileID: wp.ID, URL: wp.URL})
+		}
+	case *tg.MessageMediaGeo, *tg.MessageMediaGeoLive:
+		refs = append(refs, message.MediaRef{Kind: message.MediaLocation})
+	case *tg.MessageMediaContact:
+		refs = append(refs, message.MediaRef{Kind: message.MediaContact})
+	case *tg.MessageMediaPoll:
+		refs = append(refs, message.MediaRef{Kind: message.MediaPoll})
+	case *tg.MessageMediaGame:
+		refs = append(refs, message.MediaRef{Kind: message.MediaPoll})
+	case *tg.MessageMediaDice:
+		// Dice have no downloadable media.
+	default:
+		refs = append(refs, message.MediaRef{Kind: message.MediaDocument})
+	}
+	return refs
 }
 
 func composeSender(m *tg.Message, userLib map[int64]*tg.User, chatTitle string) string {

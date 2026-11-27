@@ -7,7 +7,7 @@ Print new Telegram messages from specified chats to stdout, using a user account
 - **Monitor multiple chats** — channels, groups, and user DMs
 - **Two sources** — live updates via MTProto + periodic backfill poller
 - **Deduplicated** — messages are never printed twice, even when the poller catches up
-- **Template output** — built-in `text` and `jsonl` formats, plus custom templates
+- **Template output** — built-in `text`, `jsonl`, and context-rich `event` formats, plus custom templates
 - **Single binary** — Go, no runtime dependencies, cross-platform
 
 ## Quick start
@@ -140,6 +140,16 @@ poll_page_size = 100
   timezone = "local"
 ```
 
+The built-in `event` format is a superset of `jsonl`. It adds IDs, reply/edit/
+pin/mention flags, sender details, media references, and forward provenance:
+
+```toml
+  [formats.event]
+  template = '{"chat_id":{chat_id},"message_id":{message_id},"reply_to_message_id":{reply_to_message_id},"datetime":{datetime|json},"date_unix":{date_unix},"channel":{channel|json},"sender":{sender|json},"sender_id":{sender_id},"sender_username":{sender_username|json},"sender_is_bot":{sender_is_bot},"text":{text|json},"is_edit":{is_edit},"is_pinned":{is_pinned},"is_mention":{is_mention},"media":{media|json},"forward":{forward|json}}'
+  datetime_format = "2006-01-02T15:04:05Z07:00"
+  timezone = "local"
+```
+
 ### Environment overrides
 
 | Variable | Overrides |
@@ -161,8 +171,22 @@ poll_page_size = 100
 | `{channel}` | Chat title |
 | `{sender}` | Author name (with @username when known) |
 | `{text}` | Message body with media markers and forward prefix |
+| `{chat_id}` | Telegram chat ID |
+| `{message_id}` | Message ID within the chat |
+| `{reply_to_message_id}` | Replied-to message ID, or `0` |
+| `{date_unix}` | Message date as a Unix timestamp |
+| `{is_edit}` | `true` when Telegram marked the message as edited |
+| `{is_pinned}` | `true` when the message is pinned |
+| `{is_mention}` | `true` when the message mentions your account |
+| `{sender_id}` | Author's Telegram user ID, or `0` |
+| `{sender_username}` | Author's username without `@`, or empty |
+| `{sender_is_bot}` | `true` when the author is a bot |
+| `{media}` | JSON array of attachments (`kind`, `file_id`, `url`) |
+| `{forward}` | JSON object with forward provenance, or `null` |
 
 Use `{field|json}` to JSON-encode any field. Use `{{` / `}}` for literal braces.
+Numeric and boolean fields are emitted as JSON literals; `{media}` and
+`{forward}` are always JSON so they stay machine-readable.
 
 ## Architecture
 

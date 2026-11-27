@@ -21,6 +21,7 @@ import (
 const (
 	BuiltinText  = "text"
 	BuiltinJSONL = "jsonl"
+	BuiltinEvent = "event"
 )
 
 const (
@@ -109,6 +110,15 @@ func Defaults() *Config {
 			},
 			BuiltinJSONL: {
 				Template:       `{"datetime":{datetime|json},"channel":{channel|json},"sender":{sender|json},"text":{text|json}}`,
+				DatetimeFormat: defaultJSONLayout,
+				Timezone:       "local",
+			},
+			BuiltinEvent: {
+				Template: `{"chat_id":{chat_id},"message_id":{message_id},"reply_to_message_id":{reply_to_message_id},` +
+					`"datetime":{datetime|json},"date_unix":{date_unix},"channel":{channel|json},` +
+					`"sender":{sender|json},"sender_id":{sender_id},"sender_username":{sender_username|json},` +
+					`"sender_is_bot":{sender_is_bot},"text":{text|json},"is_edit":{is_edit},` +
+					`"is_pinned":{is_pinned},"is_mention":{is_mention},"media":{media|json},"forward":{forward|json}}`,
 				DatetimeFormat: defaultJSONLayout,
 				Timezone:       "local",
 			},

@@ -79,9 +79,9 @@ func TestExtractUpdates(t *testing.T) {
 
 func TestResolveMedia(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		media tg.MessageMediaClass
-		kind message.MediaKind
+		kind  message.MediaKind
 		extra string
 	}{
 		{"photo", &tg.MessageMediaPhoto{}, message.MediaPhoto, ""},
@@ -377,9 +377,9 @@ func TestNormalizeWithForward(t *testing.T) {
 func TestNormalizeWithMedia(t *testing.T) {
 	userLib := map[int64]*tg.User{}
 	m := &tg.Message{
-		ID:     6,
-		PeerID: &tg.PeerChannel{ChannelID: -1001},
-		Date:   int(time.Now().Unix()),
+		ID:      6,
+		PeerID:  &tg.PeerChannel{ChannelID: -1001},
+		Date:    int(time.Now().Unix()),
 		Message: "",
 	}
 	m.Flags.Set(9) // set the Media bit
@@ -387,5 +387,138 @@ func TestNormalizeWithMedia(t *testing.T) {
 	nm := normalizeMessage(m, userLib, "Channel")
 	if nm.Text != "[photo]" {
 		t.Fatalf("Text = %q", nm.Text)
+	}
+}
+
+func TestNormalizeContextFields(t *testing.T) {
+	userLib := map[int64]*tg.User{
+		100: {ID: 100, FirstName: "Alice", LastName: "Smith", Username: "alice", Bot: true},
+	}
+	m := &tg.Message{
+		ID:        10,
+		PeerID:    &tg.PeerChannel{ChannelID: -100123},
+		Date:      1700000000,
+		Message:   "hello",
+		Pinned:    true,
+		Mentioned: true,
+	}
+	m.SetFromID(&tg.PeerUser{UserID: 100})
+	reply := &tg.MessageReplyHeader{}
+	reply.SetReplyToMsgID(9)
+	m.SetReplyTo(reply)
+	m.SetEditDate(1700000100)
+	m.SetMedia(&tg.MessageMediaPhoto{Photo: &tg.Photo{ID: 777}})
+	fwd := tg.MessageFwdHeader{Date: 1600000000}
+	fwd.SetFromID(&tg.PeerUser{UserID: 100})
+	fwd.SetChannelPost(55)
+	m.SetFwdFrom(fwd)
+
+	nm := normalizeMessage(m, userLib, "Channel")
+
+	if nm.ReplyToMessageID != 9 {
+		t.Fatalf("ReplyToMessageID = %d", nm.ReplyToMessageID)
+	}
+	if !nm.IsEdit || !nm.IsPinned || !nm.IsMention {
+		t.Fatalf("flags = edit:%v pinned:%v mention:%v", nm.IsEdit, nm.IsPinned, nm.IsMention)
+	}
+	if nm.SenderID != 100 || nm.SenderUsername != "alice" || !nm.SenderIsBot {
+		t.Fatalf("sender = %d, %q, %v", nm.SenderID, nm.SenderUsername, nm.SenderIsBot)
+	}
+	if len(nm.Media) != 1 || nm.Media[0].Kind != message.MediaPhoto || nm.Media[0].FileID != 777 {
+		t.Fatalf("media = %#v", nm.Media)
+	}
+	if nm.Forward == nil {
+		t.Fatal("forward is nil")
+	}
+	if nm.Forward.FromID != 100 || nm.Forward.FromName != "Alice Smith" ||
+		nm.Forward.FromUsername != "alice" || nm.Forward.ChannelPost != 55 ||
+		nm.Forward.DateUnix != 1600000000 {
+		t.Fatalf("forward = %#v", nm.Forward)
+	}
+}
+
+func TestNormalizeNoContext(t *testing.T) {
+	nm := normalizeMessage(&tg.Message{ID: 1, PeerID: &tg.PeerChat{ChatID: -42}}, nil, "Group")
+	if nm.ReplyToMessageID != 0 || nm.IsEdit || nm.IsPinned || nm.IsMention {
+		t.Fatalf("unexpected context: %#v", nm)
+	}
+	if nm.Media == nil || len(nm.Media) != 0 {
+		t.Fatalf("Media = %#v, want empty non-nil slice", nm.Media)
+	}
+	if nm.Forward != nil {
+		t.Fatalf("Forward = %#v, want nil", nm.Forward)
+	}
+}
+
+func TestReplyToMessageID(t *testing.T) {
+	m := &tg.Message{}
+	if got := replyToMessageID(m); got != 0 {
+		t.Fatalf("no reply = %d", got)
+	}
+
+	reply := &tg.MessageReplyHeader{}
+	reply.SetReplyToMsgID(12)
+	m.SetReplyTo(reply)
+	if got := replyToMessageID(m); got != 12 {
+		t.Fatalf("reply = %d", got)
+	}
+
+	story := &tg.Message{}
+	story.SetReplyTo(&tg.MessageReplyStoryHeader{StoryID: 5})
+	if got := replyToMessageID(story); got != 0 {
+		t.Fatalf("story reply = %d, want 0", got)
+	}
+}
+
+func TestExtractMediaRefs(t *testing.T) {
+	tests := []struct {
+		name  string
+		media tg.MessageMediaClass
+		want  []message.MediaRef
+	}{
+		{
+			"photo",
+			&tg.MessageMediaPhoto{Photo: &tg.Photo{ID: 1}},
+			[]message.MediaRef{{Kind: message.MediaPhoto, FileID: 1}},
+		},
+		{
+			"document",
+			&tg.MessageMediaDocument{Document: &tg.Document{ID: 2}},
+			[]message.MediaRef{{Kind: message.MediaDocument, FileID: 2}},
+		},
+		{
+			"webpage",
+			&tg.MessageMediaWebPage{Webpage: &tg.WebPage{ID: 3, URL: "https://example.com"}},
+			[]message.MediaRef{{Kind: message.MediaWebPage, FileID: 3, URL: "https://example.com"}},
+		},
+		{
+			"location",
+			&tg.MessageMediaGeo{},
+			[]message.MediaRef{{Kind: message.MediaLocation}},
+		},
+		{
+			"dice",
+			&tg.MessageMediaDice{},
+			[]message.MediaRef{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &tg.Message{}
+			m.SetMedia(tt.media)
+			got := extractMediaRefs(m)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %#v, want %#v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %#v, want %#v", got, tt.want)
+				}
+			}
+		})
+	}
+
+	if got := extractMediaRefs(&tg.Message{}); got == nil || len(got) != 0 {
+		t.Fatalf("no media = %#v, want empty non-nil slice", got)
 	}
 }

@@ -211,6 +211,65 @@ func TestBuiltinJSONLRendersValidJSON(t *testing.T) {
 	}
 }
 
+func TestBuiltinEventRendersValidJSON(t *testing.T) {
+	isolateEnv(t)
+	cfg, err := Parse([]byte(credentials))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	tmpl, ok := cfg.Template(BuiltinEvent)
+	if !ok {
+		t.Fatal("event template missing")
+	}
+	date := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	line := tmpl.Render(message.Message{
+		ChatID:           -100123,
+		MessageID:        42,
+		ReplyToMessageID: 41,
+		Date:             date,
+		Channel:          "ch",
+		Sender:           "s",
+		Text:             "a\nb \"q\"",
+		IsEdit:           true,
+		IsPinned:         false,
+		IsMention:        true,
+		SenderID:         7,
+		SenderUsername:   "u",
+		SenderIsBot:      true,
+		Media:            []message.MediaRef{{Kind: message.MediaPhoto, FileID: 9}},
+		Forward:          &message.Forward{FromName: "f"},
+	})
+
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(line), &decoded); err != nil {
+		t.Fatalf("event line is not valid JSON: %v (%q)", err, line)
+	}
+	for _, key := range []string{
+		"chat_id", "message_id", "reply_to_message_id", "datetime", "date_unix",
+		"channel", "sender", "sender_id", "sender_username", "sender_is_bot",
+		"text", "is_edit", "is_pinned", "is_mention", "media", "forward",
+	} {
+		if _, ok := decoded[key]; !ok {
+			t.Fatalf("event JSON is missing %q: %s", key, line)
+		}
+	}
+	if string(decoded["chat_id"]) != "-100123" {
+		t.Fatalf("chat_id = %s", decoded["chat_id"])
+	}
+	if string(decoded["date_unix"]) != "1795435200" {
+		t.Fatalf("date_unix = %s", decoded["date_unix"])
+	}
+	if string(decoded["is_edit"]) != "true" || string(decoded["is_pinned"]) != "false" {
+		t.Fatalf("flags = %s/%s", decoded["is_edit"], decoded["is_pinned"])
+	}
+	if string(decoded["media"]) != `[{"kind":"photo","file_id":9}]` {
+		t.Fatalf("media = %s", decoded["media"])
+	}
+	if string(decoded["forward"]) != `{"from_name":"f"}` {
+		t.Fatalf("forward = %s", decoded["forward"])
+	}
+}
+
 func TestFormatNamePriority(t *testing.T) {
 	isolateEnv(t)
 	cfg, err := Parse([]byte("default_format = \"jsonl\"\n" + credentials))

@@ -153,3 +153,77 @@ func TestNegativeIndentRejected(t *testing.T) {
 		t.Fatal("expected error for negative indent")
 	}
 }
+
+func TestRenderEventFields(t *testing.T) {
+	tmpl, err := Compile(utcSpec(`{"chat_id":{chat_id},"message_id":{message_id},` +
+		`"reply_to_message_id":{reply_to_message_id},"date_unix":{date_unix},` +
+		`"is_edit":{is_edit},"is_pinned":{is_pinned},"is_mention":{is_mention},` +
+		`"sender_id":{sender_id},"sender_username":{sender_username|json},` +
+		`"sender_is_bot":{sender_is_bot},"media":{media|json},"forward":{forward|json}}`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	m := message.Message{
+		ChatID:           -100123,
+		MessageID:        42,
+		ReplyToMessageID: 41,
+		Date:             time.Unix(1700000000, 0).UTC(),
+		IsEdit:           true,
+		IsPinned:         true,
+		IsMention:        true,
+		SenderID:         100,
+		SenderUsername:   "alice",
+		SenderIsBot:      true,
+		Media:            []message.MediaRef{{Kind: message.MediaPhoto, FileID: 7}},
+		Forward:          &message.Forward{FromID: 5, FromName: "Bob", FromUsername: "bob"},
+	}
+	got := tmpl.Render(m)
+
+	var decoded struct {
+		ChatID      int64              `json:"chat_id"`
+		MessageID   int                `json:"message_id"`
+		ReplyTo     int                `json:"reply_to_message_id"`
+		DateUnix    int64              `json:"date_unix"`
+		IsEdit      bool               `json:"is_edit"`
+		IsPinned    bool               `json:"is_pinned"`
+		IsMention   bool               `json:"is_mention"`
+		SenderID    int64              `json:"sender_id"`
+		SenderName  string             `json:"sender_username"`
+		SenderIsBot bool               `json:"sender_is_bot"`
+		Media       []message.MediaRef `json:"media"`
+		Forward     *message.Forward   `json:"forward"`
+	}
+	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
+		t.Fatalf("event is not valid JSON: %v (%q)", err, got)
+	}
+	if decoded.ChatID != -100123 || decoded.MessageID != 42 || decoded.ReplyTo != 41 {
+		t.Fatalf("id fields = %#v", decoded)
+	}
+	if decoded.DateUnix != 1700000000 {
+		t.Fatalf("date_unix = %d", decoded.DateUnix)
+	}
+	if !decoded.IsEdit || !decoded.IsPinned || !decoded.IsMention {
+		t.Fatalf("flag fields = %#v", decoded)
+	}
+	if decoded.SenderID != 100 || decoded.SenderName != "alice" || !decoded.SenderIsBot {
+		t.Fatalf("sender fields = %#v", decoded)
+	}
+	if len(decoded.Media) != 1 || decoded.Media[0].Kind != message.MediaPhoto || decoded.Media[0].FileID != 7 {
+		t.Fatalf("media = %#v", decoded.Media)
+	}
+	if decoded.Forward == nil || decoded.Forward.FromName != "Bob" || decoded.Forward.FromUsername != "bob" {
+		t.Fatalf("forward = %#v", decoded.Forward)
+	}
+}
+
+func TestRenderEventNilCollections(t *testing.T) {
+	tmpl, err := Compile(utcSpec(`{"media":{media|json},"forward":{forward|json}}`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	got := tmpl.Render(message.Message{})
+	want := `{"media":[],"forward":null}`
+	if got != want {
+		t.Fatalf("Render = %q, want %q", got, want)
+	}
+}
